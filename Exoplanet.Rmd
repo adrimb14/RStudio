@@ -1,0 +1,272 @@
+---
+title: "Final project"
+author: "Adrian Martin Bethencourt"
+date: "16/08/2020"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Load the required packages
+```{r message=FALSE, warning=FALSE}
+library(magrittr)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggplot2)
+library(ggiraph)
+library(gganimate)
+library(readr)
+library(viridisLite)
+library(viridis)
+library(reshape2)
+#Install the following if required
+library(hrbrthemes) #Install.packages("hrbrthemes")
+library(lubridate)  #Install.packages("lubridate")
+```
+
+## 1. Import the data
+```{r warning=FALSE}
+exo_data <- read_csv("exo_data.csv")
+class(exo_data)
+#The columns 1,16,17,18,25 are characters already.  
+exo_data$year %<>% as.integer
+exo_data$flag %<>% as.factor  
+exo_data$meth %<>% as.factor 
+```
+## 2. Exclude the exoplanets with an unknown method of discovery.
+```{r warning=FALSE}
+#Filter the data by excluding the unknown method
+exo_data<-exo_data %>% filter(meth == "transit"|
+                              meth =="RV"|
+                              meth =="microlensing")
+
+```
+
+## 3. Create a graphic which illustrates the relationship between the log-distances from the Sun and the methods of discovery.
+```{r warning=FALSE}
+p<-ggplot(exo_data, aes(x= meth, y = log(dist)))
+p + geom_boxplot(fill='#A4A4A4', color="black") + 
+  theme_minimal()+
+  scale_fill_brewer(palette="Dark2")+
+  xlab("Method of discovery") +
+  ylab("Log distance from the Sun") +
+  ggtitle('Log distance from the Sun by Method of discovery')
+```
+
+## 4.Create scatterplots of the log-mass versus log-distances, separating by methods of discovery. Hovering with the cursor highlights the point and displays its name, and,if you click,the exoplanet’s page on the Open Exoplanet Catalogue will be opened.
+(paste the id after http://www.openexoplanetcatalogue.com/planet/ ).
+
+```{r warning=FALSE}
+#Create the link
+exo_data$onclick <- sprintf("window.open(\"%s%s\")",
+                            "http://www.openexoplanetcatalogue.com/planet/",
+                            as.character(exo_data$id))
+#Plot
+p<-ggplot(exo_data, aes(x = log(mass), y = log(dist), color = meth))
+# Add the point to the plot
+p2<-  p+ geom_point_interactive(aes(tooltip = id,
+                                    data_id = id,
+                                    onclick = onclick))+
+  xlab("Log planetary mass") +
+  ylab("Log distance from the Sun") +
+  ggtitle('Log planetary mass by log distance from the Sun by Method')
+#Print
+ggiraph(code = print(p2), width = 1)
+```
+
+## 5. Rename the radius into jupiter_radius, and create a new column called earth_radius which is 11.2 times the Jupiter radius.
+
+```{r warning=FALSE}
+#Rename the variable
+exo_data <- exo_data %>% 
+  rename(jupiter_radius = radius ) 
+#Transform the variable
+exo_data <- exo_data %>%
+  mutate(earth_radius = jupiter_radius / 11.2 ) 
+```
+
+## 6. Focus only on the rows where log-earth radius and log-period have no missing values, and perform kmeans with four clusters on these two columns.
+```{r warning=FALSE}
+#We create a new data.frame to keep the original data
+n_exo_data<- exo_data
+
+#To apply the kmeans function we need to drop the na values
+n_exo_data<- n_exo_data %>% drop_na(earth_radius,period)
+
+#We change the variables to log
+n_exo_data <- n_exo_data %>%
+  mutate(Log_earth_r = log(earth_radius),
+         Log_period  = log(period))
+
+#Apply kmeans function with 4 centres
+km<-kmeans(n_exo_data %>% select(Log_earth_r, Log_period),
+           centers = 4)
+```
+
+
+## 7. Add the clustering labels to the dataset through a new factor column called type,with levels rocky, hot_jupiters,cold_gas_giants, others; similarly to https://en.wikipedia.org/wiki/Exoplanet#/media/File:ExoplanetPopulations-20170616.png and produce the scatterplot highlighting these clusters.
+
+```{r warning=FALSE}
+#Translate the theoretical clusters into their real meaning
+n_exo_data$type<- factor(km$cluster, levels =c('1','2','3','4'),
+                         labels = c('rocky', 'hot_jupiters', 
+                                    'cold_gas_giants', 'others'), 
+                         ordered = T )
+# Plot the results
+ggplot(n_exo_data, aes(x =Log_period, y =Log_earth_r,
+                       colour=type)) +
+  geom_point() +
+  xlab('Period in days') +
+  ylab('Log Earth distance') +
+  ggtitle("Period and Earth distance by type of exo-planet")+
+  scale_color_discrete(name="Type of\nexoplanet")
+```
+
+## 8. Use a violin plot to illustrate how these clusters relate to the log-mass of the exoplanet.
+```{r warning=FALSE}
+#Plot
+p <- ggplot(n_exo_data, aes(x=type, y=log(mass))) + 
+  geom_violin(color="#00AFBB")+
+  xlab('Type of exoplanet') +
+  ggtitle("Log mass by type of exo-planet")+
+  ylab('Log-mass')
+  
+p
+```
+
+## 9. Transform r_asc and decl into two new variables that are the same varibales but in values of seconds. Use these as coordinates to represent a celestial map for the exoplanets.
+
+```{r warning=FALSE}
+#We first address the variable e_asc
+exo_data$r_asc <- gsub(" ", ":", exo_data$r_asc, fixed=TRUE)#Transformed to hh:mm:ss
+exo_data$r_asc <- hms(exo_data$r_asc)
+exo_data$r_asc_sec <- period_to_seconds(exo_data$r_asc)
+
+#we later address the variable decl
+exo_data$decl <- gsub(" ", ":", exo_data$decl, fixed=TRUE)
+
+#Transformed to dd:mm:ss
+exo_data$decl <- hms(exo_data$decl) 
+exo_data$decl_sec <- period_to_seconds(exo_data$decl)
+
+#Now we plot the results
+ggplot(exo_data, aes(r_asc_sec, decl_sec, color= meth)) +
+  geom_point() + 
+  ggtitle("Celestial Map of the exoplanets")+
+  xlab("Right ascension (seconds)")+
+  ylab("declination (seconds)")
+```
+
+
+## 10. Create an animated time series where multiple lines illustrate the evolution over time of the total number of exoplanets discovered for each method up to that year.
+```{r warning=FALSE}
+#We create a new variable 
+time_series <- exo_data %>% group_by(meth, year) %>% 
+  summarise(count = length(meth)) %>%
+  mutate(Ncount = cumsum(count))
+
+#Na values excluded
+time_series <- na.omit(time_series)
+
+p<- time_series %>%
+  ggplot( aes(x=year, y=Ncount, group=meth, color=meth)) +
+  geom_line() +
+  geom_point() +
+  theme_ipsum() +
+  scale_color_viridis(discrete = TRUE) +
+  ggtitle("Exo-planet Mass and distance by method")+
+  scale_x_log10()+
+  xlab("Year of discovery")+
+  ylab("number of discoveries")+
+  transition_reveal(year)
+p
+```
+
+## 11. Create an interactive plot with Shiny where you can select the year (slider widget,with values 2009) and exoplanet type.Exoplanets appear as points on a scatterplot (log-mass vs log-distance coloured by method) only if they have already been discovered. If type is equal to all all types are plotted together.
+
+
+```{r, echo=FALSE}
+inputPanel(
+    
+    sliderInput(inputId = "year_d",
+                label = "Year of discovery",
+                min = 2009, max = 2018, value = 1),
+    #I was not able to put "All" as a chategory so I did it this way. 
+    #Now we can plot all together
+    checkboxGroupInput("checkGroup",
+                       label = "Detection Method",
+                       choices = unique(exo_data$meth),
+                       selected = unique(exo_data$meth)),
+    plotOutput(outputId = "main_plot", height = "50px")
+    )
+
+renderPlot({
+    datasetInput <- reactive({
+    exo_data %>% filter(year <= input$year_d) %>% filter(meth == input$checkGroup)#filter by method
+    })
+      dataset <- datasetInput()
+    #Create the plot
+        p<- ggplot(dataset, aes(x = log(mass), y = log(dist), color = meth))
+        p+ geom_point()+
+            xlab("Log planetary mass") +
+            ylab("Log distance from the Sun") +
+            ggtitle('Log planetary mass by log distance from the Sun by Method')
+        
+                  
+})
+
+```
+
+## 12. Fit a linear regression model where log period is the response variable and the logs of host_mass, host_temp and axis are the covariates (exclude rows that contain at least one missing value). Include an intercept term in the regression model.
+
+```{r warning=FALSE}
+#We create a new data for the model
+lm_exo_data <-  exo_data %>%select(period,host_mass,host_temp,axis)
+
+#Exclude the na
+lm_exo_data <- na.omit(lm_exo_data)
+
+#Convert into log-scale
+lm_exo_data <- lm_exo_data %>%                      
+  mutate(host_mass = log(host_mass),
+         host_temp = log(host_temp),
+         axis = log(axis)) 
+
+
+#Create the model 
+mod <- lm_exo_data %$% lm(period ~ host_mass + host_temp + axis)
+```
+## 13. Include in your RMarkdown document some model summaries and an interpretation of the model you have fit.
+
+```{r warning=FALSE}
+summary(mod)
+```
+
+*Interpretation*
+
+The first step in interpreting the multiple regression analysis is to examine the F-statistic and the associated p-value, at the bottom of model summary.
+
+We can observe that the p-value of the F-statistic is < 2.2e-16, which is highly significant. We can concluded that, at least, one of the predictor variables is significantly related to the outcome variable.
+
+To see which predictor variables are significant, we need to examine the coefficients table. If we specify our desired confidence level to be 0.01, then we would reject the null hypothesis that the slope is equal to 0 and conclude that there is a significant relationship between the period and the rest of the variables. 
+
+The coefficient of determination (R2) is given in the text at the bottom of the output. The value given here is 0.4513 meaning that 45% of the variation in period can be explained by its linear relationship with the variables host_mass, host_temp and axis.
+
+```{r}
+plot(mod$residuals)
+```
+The plots on the residuals and the fitted values provide some information related to the relevance of the model. On the one hand, the residuals distribution seems to follow a random distribution. However, there are some extreme cases that reduces the reliability of the model. 
+
+
+
+
+
+
+
+
+
+
+
